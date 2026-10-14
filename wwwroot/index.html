@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Live Panel</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 32px;
+      background: #0d1117; color: #e6edf3;
+      font: 15px/1.5 ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+    }
+    .wrap { max-width: 900px; margin: 0 auto; }
+    header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+    h1 { font-size: 19px; margin: 0; font-weight: 600; }
+    .pill { font-size: 12px; padding: 3px 10px; border-radius: 999px; border: 1px solid #2b3440; color: #8b949e; }
+    .pill.ok { color: #3fb950; border-color: #1f6f3a; }
+    .pill.warn { color: #d29922; border-color: #7a5b12; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+    .card { background: #161b22; border: 1px solid #252c36; border-radius: 10px; padding: 14px 16px; }
+    .card span { display: block; font-size: 12px; color: #8b949e; margin-bottom: 6px; }
+    .card b { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .card i { color: #8b949e; font-style: normal; margin-left: 2px; }
+    canvas { width: 100%; height: 150px; margin: 18px 0; background: #161b22; border: 1px solid #252c36; border-radius: 10px; }
+    ul { list-style: none; margin: 0; padding: 0; }
+    li { background: #161b22; border: 1px solid #252c36; border-left: 3px solid #58a6ff; border-radius: 8px; padding: 8px 12px; margin-bottom: 6px; font-size: 13px; }
+    li.sys { border-left-color: #d29922; color: #8b949e; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Live Panel</h1>
+      <span id="status" class="pill">connecting…</span>
+    </header>
+
+    <div class="cards">
+      <div class="card"><span>CPU</span><b id="cpu">–</b><i>%</i></div>
+      <div class="card"><span>Requests / sec</span><b id="requests">–</b></div>
+      <div class="card"><span>Last event</span><b id="lastId">–</b><i>id</i></div>
+    </div>
+
+    <canvas id="chart" width="1000" height="300"></canvas>
+    <ul id="log"></ul>
+  </div>
+
+  <script>
+    const status = document.getElementById("status");
+    const log = document.getElementById("log");
+    const cpuEl = document.getElementById("cpu");
+    const requestsEl = document.getElementById("requests");
+    const lastIdEl = document.getElementById("lastId");
+    const history = [];
+    let connects = 0;
+
+    function say(text) {
+      const li = document.createElement("li");
+      li.className = "sys";
+      li.textContent = new Date().toLocaleTimeString() + "  " + text;
+      log.prepend(li);
+      while (log.children.length > 12) log.lastChild.remove();
+    }
+
+    // One line: the browser connects, and reconnects on its own if the stream drops.
+    const source = new EventSource("/events");
+
+    source.addEventListener("open", () => {
+      connects++;
+      status.textContent = connects === 1 ? "connected" : "reconnected (" + connects + ")";
+      status.className = "pill ok";
+      say(connects === 1 ? "connection opened" : "connection dropped, reconnected");
+    });
+
+    source.addEventListener("error", () => {
+      status.textContent = "connection lost, retrying…";
+      status.className = "pill warn";
+    });
+
+    source.addEventListener("tick", (event) => {
+      const data = JSON.parse(event.data);
+      cpuEl.textContent = data.cpu.toFixed(1);
+      requestsEl.textContent = data.requests;
+      lastIdEl.textContent = event.lastEventId;
+
+      history.push(data.cpu);
+      if (history.length > 120) history.shift();
+      draw();
+    });
+
+    source.addEventListener("resume", (event) => {
+      say("server: you missed " + JSON.parse(event.data).missed + " events");
+    });
+
+    function draw() {
+      const canvas = document.getElementById("chart");
+      const ctx = canvas.getContext("2d");
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+      if (history.length < 2) return;
+
+      const step = w / (history.length - 1);
+      const x = (i) => i * step;
+      const y = (value) => h - (value / 100) * h * 0.85 - h * 0.08;
+
+      const fill = ctx.createLinearGradient(0, 0, 0, h);
+      fill.addColorStop(0, "rgba(88,166,255,0.35)");
+      fill.addColorStop(1, "rgba(88,166,255,0)");
+
+      ctx.beginPath();
+      history.forEach((value, i) => {
+        if (i === 0) ctx.moveTo(x(i), y(value));
+        else ctx.lineTo(x(i), y(value));
+      });
+      ctx.lineTo(w, h);
+      ctx.lineTo(0, h);
+      ctx.closePath();
+      ctx.fillStyle = fill;
+      ctx.fill();
+
+      ctx.beginPath();
+      history.forEach((value, i) => {
+        if (i === 0) ctx.moveTo(x(i), y(value));
+        else ctx.lineTo(x(i), y(value));
+      });
+      ctx.strokeStyle = "#58a6ff";
+      ctx.lineWidth = 2;
+      ctx.lineJoin = "round";
+      ctx.stroke();
+    }
+  </script>
+</body>
+</html>
